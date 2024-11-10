@@ -96,7 +96,50 @@ mod pein_staking {
         Ok(())
     }
 
+    pub fn stake(ctx: Context<Stake>, index: u8, amount: u64) -> Result<()> {
+        if ctx.accounts.sender_token.amount < amount {
+            return err!(StakingError::InsufficientBalance);
+        }
 
+        let index: usize = index as usize;
+
+        let user_stake_info = &mut ctx.accounts.user_stake_info;
+        let staking_info = &mut ctx.accounts.staking_info;
+
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.sender_token.to_account_info(),
+                    to: ctx.accounts.staking_token_vaults.to_account_info(),
+                    authority: ctx.accounts.signer.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        let clock = Clock::get()?;
+        let cur_time = clock.unix_timestamp as u64;
+
+        if user_stake_info.amount[index] > 0 {
+            let locked_period = cur_time - user_stake_info.claimed_time[index];
+            user_stake_info.pending_reward[index] = get_reward(
+                user_stake_info.amount[index],
+                locked_period,
+                staking_info.lock_period[index],
+                staking_info.reward_rate[index],
+                user_stake_info.pending_reward[index],
+            );
+        }
+
+        user_stake_info.amount[index] = user_stake_info.amount[index] + amount;
+        user_stake_info.staked_time[index] = cur_time;
+        user_stake_info.claimed_time[index] = cur_time;
+
+        staking_info.total_staked += amount;
+
+        Ok(())
+    }
 
     pub fn unstake(ctx: Context<Unstake>, index: u8) -> Result<()> {
         let index: usize = index as usize;
