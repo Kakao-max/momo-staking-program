@@ -45,6 +45,33 @@ mod pein_staking {
         Ok(())
     }
 
+    pub fn withdraw_reward_token(ctx: Context<WithdrawRewardtoken>, amount: u64) -> Result<()> {
+        if ctx.accounts.signer.key() != ctx.accounts.staking_info.owner {
+            return err!(StakingError::NotOwner);
+        }
+        if ctx.accounts.reward_token_vaults.amount < amount {
+            return err!(StakingError::InsufficientBalance);
+        }
+
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.reward_token_vaults.to_account_info(),
+                    to: ctx.accounts.recipient_token.to_account_info(),
+                    authority: ctx.accounts.reward_token_vaults.to_account_info(),
+                },
+                &[&[
+                    b"reward_token_vaults",
+                    ctx.accounts.staking_info.reward_token_mint.as_ref(),
+                    &[ctx.accounts.staking_info.reward_vaults_bump],
+                ]],
+            ),
+            amount,
+        )?;
+
+        Ok(())
+    }
 
 
 }
