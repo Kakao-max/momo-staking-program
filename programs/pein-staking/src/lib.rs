@@ -73,7 +73,99 @@ mod pein_staking {
         Ok(())
     }
 
+    pub fn deposit_reward_token(ctx: Context<DepositRewardToken>, amount: u64) -> Result<()> {
+        if ctx.accounts.signer.key() != ctx.accounts.staking_info.owner {
+            return err!(StakingError::NotOwner);
+        }
+        if ctx.accounts.sender_token.amount < amount {
+            return err!(StakingError::InsufficientBalance);
+        }
 
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.sender_token.to_account_info(),
+                    to: ctx.accounts.reward_token_vaults.to_account_info(),
+                    authority: ctx.accounts.signer.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        Ok(())
+    }
+
+
+
+    pub fn unstake(ctx: Context<Unstake>, index: u8) -> Result<()> {
+        let index: usize = index as usize;
+        let user_stake_info = &mut ctx.accounts.user_stake_info;
+        let staking_info = &mut ctx.accounts.staking_info;
+
+        let clock = Clock::get()?;
+        let cur_time = clock.unix_timestamp as u64;
+
+        if user_stake_info.staked_time[index] + staking_info.lock_period[index] > (cur_time) {
+            return err!(StakingError::Locked);
+        }
+        let reward_period = cur_time - user_stake_info.claimed_time[index];
+        let reward_amount: u64 = get_reward(
+            user_stake_info.amount[index],
+            reward_period,
+            staking_info.lock_period[index],
+            staking_info.reward_rate[index],
+            user_stake_info.pending_reward[index],
+        );
+        let staked_amount = user_stake_info.amount[index];
+
+        if ctx.accounts.reward_token_vaults.amount < reward_amount {
+            return err!(StakingError::InsufficientBalance);
+        }
+
+        staking_info.total_staked -= user_stake_info.amount[index];
+
+        user_stake_info.amount[index] = 0;
+        user_stake_info.claimed_amount[index] += reward_amount;
+        user_stake_info.claimed_time[index] = cur_time;
+        user_stake_info.staked_time[index] = 0;
+        user_stake_info.pending_reward[index] = 0;
+
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.staking_token_vaults.to_account_info(),
+                    to: ctx.accounts.recipient_staking_token.to_account_info(),
+                    authority: ctx.accounts.staking_token_vaults.to_account_info(),
+                },
+                &[&[
+                    b"staking_token_vaults",
+                    ctx.accounts.staking_info.staking_token_mint.as_ref(),
+                    &[ctx.accounts.staking_info.staking_vaults_bump],
+                ]],
+            ),
+            staked_amount,
+        )?;
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.reward_token_vaults.to_account_info(),
+                    to: ctx.accounts.recipient_reward_token.to_account_info(),
+                    authority: ctx.accounts.reward_token_vaults.to_account_info(),
+                },
+                &[&[
+                    b"reward_token_vaults",
+                    ctx.accounts.staking_info.reward_token_mint.as_ref(),
+                    &[ctx.accounts.staking_info.reward_vaults_bump],
+                ]],
+            ),
+            reward_amount,
+        )?;
+
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
